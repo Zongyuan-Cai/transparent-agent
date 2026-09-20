@@ -1,192 +1,169 @@
 # Transparent Agent
 
-一个运行在本地、使用 OpenAI 模型和 Bash 工具完成真实任务的 agent。
+一个本地的轻量终端编码 agent：理解任务、检查项目、读改文件、执行命令、根据结果迭代、验证后汇报。
 
-首要目标是构建可用的 agent：理解用户任务，检查环境，执行命令，观察结果，调整操作，并验证最终产物。Transparent 是这个 agent 的基础能力：用户能够查看每一轮真正发送给 LLM 的内容、LLM 返回的内容，以及工具的实际执行结果。
+本项目最终目标是 **Transparent Agent**（agent 的每一步都可被外部检查），但当前版本 **只实现 agent 本身**。
+透明层尚未实现，架构上只保留了接入点：agent core 通过事件（events）向外通知，从不依赖任何观察者存在。
+把未来的透明组件全部删掉，agent 的行为和 TUI 不受任何影响。
 
-> 当前状态：设计阶段。此 README 定义第一版实现目标，当前尚无可运行程序。
+## 当前状态
 
-## 第一版范围
+已实现（V1）：
 
-第一版以本地 CLI 为入口，在用户指定的 WSL 项目目录中工作。用户可以提交任务，并在同一会话中继续追问或修改要求。
+- 原生 tool calling 的迭代 agent loop（模型自主决定调用哪些工具、调用多少次，不预设流程）；
+- 七个工具：`read` `write` `edit` `ls` `find` `grep` `bash`；
+- 流式输出、持久多轮会话、Ctrl+C 中断、常用斜杠命令的轻量 TUI；
+- OpenAI 兼容的模型适配层（`chat/completions` + 流式 + 工具调用），换 provider 只需新增一个 adapter；
+- 可选事件钩子（sink），默认无观察者时行为完全一致；
+- 工具输出截断、bash 超时/进程组清理、工作区路径越界防护。
 
-第一套工具以 Bash 为核心，通过已有的系统命令完成实际工作：
+未实现（有意留到后续版本）：透明/检查界面、多 agent、子 agent、计划器、todo、长期记忆、RAG、MCP、
+浏览器自动化、上下文压缩、检查点回滚、跨进程会话恢复、Web UI、基准框架。
 
-- 查看目录、读取文件、搜索代码和检查项目环境。
-- 创建和修改文件，包括已有项目中的文件。
-- 运行脚本、测试和构建命令。
-- 根据命令输出诊断问题、修改方案并再次执行。
-- 检查结果，向用户报告完成内容、验证依据和未完成事项。
+## 安装与运行
 
-先完成可靠的 agent loop、Bash 执行器和透明记录，再完善图形界面。第一版暂不引入多 agent、长期记忆或复杂规划框架。
+依赖：Python ≥ 3.10，`openai` SDK（≥1.0）。grep 会优先使用 `rg`，没有 `ripgrep` 时自动退回 Python 实现。
 
-## 核心执行循环
+```bash
+pip install -e .                      # 可选：装好 console script（需要较新的 pip/setuptools）
+python -m transparent_agent           # 在当前目录启动（未安装时在仓库根目录运行）
+transparent-agent -C ~/my-project     # 指定工作区
+transparent-agent -p "fix the failing tests" -C ~/my-project   # 单次非交互
+```
 
-~~~text
-用户任务 + 当前会话上下文
-              |
-              v
-构造请求并记录完整请求体 <--------------------+
-              |                              |
-              v                              |
-调用 OpenAI，记录完整响应                     |
-              |                              |
-              +-- 工具调用 --> 执行 Bash      |
-              |                   |          |
-              |                   v          |
-              |            stdout / stderr   |
-              |            退出码 / 执行状态  |
-              |                   |          |
-              |                   +-> 回填历史
-              |
-              +-- 正常完成且无工具调用 --> 最终回答
-              |
-              +-- 取消 / 运行失败 / 达到限制 --> 明确终止
-~~~
+## 配置
 
-循环不预先规定命令顺序或工具调用次数。模型依据任务和真实工具结果决定下一步。执行命令失败通常是继续分析的输入，不直接代表整个任务失败。
+把 key 写进用户级配置文件后，在任意目录直接 `transparent-agent` 即可：
 
-Agent 应先了解必要的环境信息，再执行操作；完成后使用合适的命令验证结果。最终回答应区分已经完成、已经验证和仍然存在的问题。
+```ini
+# ~/.config/transparent-agent/.env
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_MODEL=deepseek-flash
+OPENAI_API_KEY=sk-...
+```
 
-## Bash 工具
+优先级：CLI 参数 → 环境变量 → 当前目录 `.env` → `~/.config/transparent-agent/.env`。
+已在环境中的变量不会被 `.env` 覆盖；`.env` 支持 `export` 前缀、引号和 `#` 注释，
+上面配置表里的任何变量都可以写进去（例如 `MAX_STEPS=60`）。
 
-工具名称：bash。
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | 无（必填） | API key |
+| `OPENAI_BASE_URL` | OpenAI 官方 | 任意 OpenAI 兼容端点，例如 `https://api.deepseek.com` |
+| `OPENAI_MODEL` | `gpt-4o` | 支持 function calling 的模型 |
+| `MAX_STEPS` | `40` | 每个用户回合允许的模型请求次数上限 |
+| `BASH_TIMEOUT_S` / `MAX_BASH_TIMEOUT_S` | `120` / `600` | bash 默认/最大超时 |
+| `MAX_TOOL_OUTPUT_CHARS` | `30000` | 单次工具结果回填给模型的最大长度（超出中间截断并注明） |
+| `MODEL_TIMEOUT_S` | `300` | 单次模型请求超时 |
+| `STREAM_USAGE` | `true` | 是否向端点请求流式 usage；端点不支持时设为 `false` |
+| `WORKSPACE_DIR` | 当前目录 | 默认工作区 |
 
-输入示例：
+## 交互
 
-~~~json
-{
-  "command": "pwd && ls -la",
-  "cwd": "/home/bxd/transparent-agent",
-  "timeout_ms": 10000
-}
-~~~
+```text
+$ python -m transparent_agent -C ~/project
+workspace: /home/you/project
+model: deepseek-chat  (https://api.deepseek.com)
 
-工具接收：
+> Find why the parser tests fail and fix them.
 
-| 字段 | 含义 |
-| --- | --- |
-| command | 交给 Bash 执行的命令字符串，支持多行脚本、管道和重定向 |
-| cwd | 本次命令的工作目录；省略时使用会话工作目录 |
-| timeout_ms | 命令超时；省略时使用配置默认值，并受执行器最大值约束 |
+● Inspecting the project
+  → ls .
+  → read tests/test_parser.py
+  → grep /parse_config/ in src
 
-执行器返回结构化结果，例如：
+● The failure is in parse_config.
+  → edit src/parser.py
 
-~~~json
-{
-  "status": "completed",
-  "exit_code": 0,
-  "stdout": "/home/bxd/transparent-agent\n",
-  "stderr": "",
-  "cwd": "/home/bxd/transparent-agent",
-  "duration_ms": 12,
-  "timed_out": false,
-  "truncated": false
-}
-~~~
+● Running the tests.
+  → bash pytest -q
+  8 passed
+✓ done (5 steps, 31.2k tokens)
 
-示例用于说明字段，实际结果必须来自真实进程。执行状态至少区分 completed、timed_out、cancelled 和 execution_error。正常退出时保留真实退出码；启动失败或被信号终止时保留对应错误或信号，不能伪造退出码 0。
+>
+```
 
-### 执行语义
+- Enter 发送；行尾 `\` 续行。
+- `Ctrl+C` 中断当前生成或命令（命令的整个进程组会被终止），会话继续可用；提示符处 `Ctrl+C` 取消当前输入。
+- `Ctrl+D` 或 `/exit` 退出。
+- 命令：`/help` `/clear` `/status` `/model [NAME]` `/exit`。
+- `-p/--print` 非交互模式：助手文本到 stdout，工具活动到 stderr，便于脚本化。
 
-- 命令在用户的 WSL 环境中真实执行，文件修改跨工具调用保留。
-- 每次调用使用独立、非交互的 Bash 进程，并显式设置 cwd。
-- 单次调用里的 cd 和环境变量修改仅影响该次调用；下一次调用仍以指定 cwd 和环境配置开始。
-- 第一版以有限时长的前台命令为主；交互式终端和后台服务管理留待后续实现。
-- stdout 和 stderr 分别捕获，非零退出码如实返回给模型。
-- 超时或用户取消时终止命令进程组并回收进程，不能只停止等待而让命令继续执行。
-- 输出较大时，将完整输出保存在本地记录中；回填模型的内容使用明确的长度限制，注明截断和完整输出路径。
-- 界面能够区分完整工具输出与实际回填给模型的内容。
-- 参数错误、工作目录不存在等情况作为结构化工具错误返回。
+## 架构
 
-会话工作目录是默认执行位置，不是文件系统沙箱。Bash 的实际权限取决于运行 agent 的 WSL 用户；README 不将路径约定描述为系统隔离。
-
-## 透明记录
-
-每次运行都应留下可以检查的真实记录。
-
-| 记录 | 展示内容 |
-| --- | --- |
-| LLM request | 模型、指令、完整输入历史、工具定义及所有实际发送的参数 |
-| LLM response | API 返回的完整 JSON，包括文本、工具调用、状态和可用的 usage 信息 |
-| Tool call | 模型返回的原始参数、解析后的命令、实际 cwd、超时设置和 call_id |
-| Tool result | stdout、stderr、退出码、执行状态、耗时及截断信息 |
-| Run status | 当前轮次、开始与结束时间、完成或终止原因 |
-
-请求日志应在模型调用边界采集，响应日志应在响应接收边界采集。每一轮都保留完整快照，后续追加历史不能修改旧记录。摘要可以帮助阅读，但不能替代原始数据。
-
-透明展示覆盖 API 实际提供的数据，不声称展示 API 未返回的内部推理。
-
-认证信息不属于展示内容：API 密钥和认证请求头不写入日志，也不主动传入 Bash 子进程。命令读取的项目内容和命令输出可能进入模型上下文，应在使用说明中清楚说明这一数据流。
-
-## OpenAI 接入
-
-第一版计划使用 Responses API 的 function calling，直接编写 agent loop。
-
-1. 使用 instructions 提供 agent 行为指令，使用 input 显式传递会话历史。
-2. 在 tools 中声明 bash 的参数结构。
-3. 遍历响应 output，识别 function_call，同时保留完整 output items。
-4. 校验工具参数并执行 Bash。
-5. 将实际工具结果作为 function_call_output 加入历史，使用 call_id 关联原调用。
-6. 再次请求模型，直到本轮任务结束。
-
-先采用非流式模型响应和顺序工具执行。即使响应包含文本，只要还有工具调用，就应处理工具调用后再继续循环。
-
-为了让用户直接检查每轮上下文，第一版显式发送历史，不使用 previous_response_id 隐式衔接。达到上下文限制时明确报告，不能静默丢弃历史；后续如引入压缩，压缩前后的内容也需要可见。
-
-接口依据：[OpenAI 官方 Function calling 文档](https://developers.openai.com/api/docs/guides/function-calling)。
-
-## 会话与交互
-
-- 用户在指定目录启动 agent，输入自然语言任务。
-- 默认展示当前命令、执行结果摘要和 agent 回答。
-- 提供查看完整 LLM 请求、响应和工具记录的方式。
-- 本轮完成后可以继续输入，新任务沿用当前会话历史和工作目录。
-- 用户可以取消正在执行的任务；取消后不再自动发起新的模型请求或工具调用。
-- 文件变更不会因为任务失败或取消而自动回滚，结束时应明确说明已知执行状态。
-- 运行记录落盘，便于检查和调试；跨进程恢复会话不作为第一版前提。
-
-## 实现职责
+```text
+TUI（tui/）        ← 只消费事件做展示，agent 不感知
+     │  events（可选 sink）
+Agent Core（agent.py）  ← 迭代循环、会话历史、工具分派
+     │
+Model Interface（models.py） → Provider（providers/openai_chat.py）
+     │
+Tools / Environment（tools/：base fs search shell）
+```
 
 | 模块 | 职责 |
 | --- | --- |
-| CLI | 接收任务、展示运行状态、查看详情、处理取消 |
-| Agent loop | 管理上下文、分派工具、控制轮数和终止条件 |
-| OpenAI 客户端 | 发送请求、接收响应、记录 API 错误和调用尝试 |
-| Bash 执行器 | 管理 cwd、子进程、输出、超时与取消 |
-| Trace 记录器 | 保存请求、响应、工具结果和运行事件 |
+| `agent.py` | 迭代循环：构造请求 → 流式接收 → 执行工具 → 回填结果 → 再次请求；终止、取消、步数上限、历史一致性 |
+| `models.py` | 归一化类型（Message/ToolCall/ModelResponse/Usage）与 Model 协议 |
+| `providers/openai_chat.py` | OpenAI 兼容适配器：请求编码、SSE 增量重组（工具调用按 index 拼接）、usage、错误映射 |
+| `tools/` | 工具实现、注册表与执行器（预期失败转成给模型的观测结果）、工作区路径防护 |
+| `events.py` | 事件类型与 sink 协议（`NullSink` 默认，`CompositeSink` 组合） |
+| `tui/` | 渲染（事件 → 终端输出）与 REPL（输入、命令、中断） |
 
-事件至少包含 run_id、sequence、timestamp、type 和 payload。模型调用关联 step，工具调用关联 call_id；多轮会话另用 session_id 关联。
+设计原则：
 
-首批事件类型：llm_request、llm_response、llm_error、tool_call、tool_result、run_completed、run_failed、run_cancelled。
+- **agent core 不依赖任何接口层**：不打印、不知道 TUI 存在；`NullSink` 下行为完全一致。
+- **模型抽象**：core 只看到归一化消息/工具/流式事件；provider 细节留在 adapter 内。
+- **工具失败是观测**：不存在的文件、patch 不匹配、命令非零退出、超时都是结构化结果回填给模型，不终止程序。
+- **事件是通知，不是控制流**：sink 抛异常不会影响 agent；事件 payload 是纯 JSON 可序列化数据。
 
-## 配置与运行限制
+### 事件
 
-| 配置 | 用途 |
+`agent_start` · `user_message` · `model_request_start`（完整 system + messages + tools 快照）·
+`model_text_delta` · `model_response`（文本、工具调用、finish_reason、usage）·
+`tool_call_start` / `tool_call_end`（call_id、参数、输出、is_error、耗时、是否取消）·
+`agent_error` · `agent_finish`（stop_reason、步数、usage、耗时）。
+
+外部观察者接入示例见 `examples/event_logger.py`（把每个事件写成 JSONL，与 TUI 同时挂载）。
+
+## 工具
+
+| 工具 | 说明 |
 | --- | --- |
-| OPENAI_API_KEY | OpenAI 调用凭证 |
-| OPENAI_MODEL | 支持 function calling 的模型 |
-| WORKSPACE_DIR | 会话默认工作目录 |
-| MAX_STEPS | 单个用户任务允许的模型调用次数 |
-| COMMAND_TIMEOUT_MS | Bash 默认超时 |
-| MAX_COMMAND_TIMEOUT_MS | 单条 Bash 命令的最大超时 |
-| MAX_TOOL_OUTPUT_CHARS | 回填模型的单次工具输出长度上限 |
-| TRACE_DIR | 请求、响应、事件和完整命令输出的保存位置 |
+| `read` | 读文本文件，带行号；支持 `start_line`/`end_line`；大文件只返回前 2000 行并注明；二进制文件明确报错 |
+| `write` | 创建/整体覆盖文件，自动建父目录 |
+| `edit` | 精确字符串替换（`old_string`→`new_string`）；要求唯一或 `replace_all`；失败时说明原因；返回小 diff |
+| `ls` | 列目录（非递归，最多 200 条） |
+| `find` | 按文件名 glob 递归查找，可限定 file/dir |
+| `grep` | 正则搜索内容，返回 `path:line:text`；优先 `rg`，无则 Python 回退；支持 `glob`/`ignore_case` |
+| `bash` | 在工作区执行命令；返回 stdout/stderr/退出码/耗时/超时状态；进程组超时或取消时整体终止 |
 
-达到轮数限制、API 失败或收到不完整响应时明确终止，保留已有记录，不将其标记为成功。第一版关闭 SDK 自动重试，避免未被记录的额外调用；若后续加入重试，每次尝试都必须可见。
+约束：所有路径解析后必须位于工作区内（含符号链接解析），逃逸请求作为错误返回给模型；
+bash 默认 cwd 为工作区，单次命令内的 `cd`/环境变量不影响后续调用；输出超限时中间截断并注明。
 
-具体语言、依赖和配置默认值在实现时确定。安装与启动命令待代码可运行后补充。
+## 测试
 
-## 第一版验收
+```bash
+python3 -m pytest -q          # 131 个单元/集成测试，使用脚本化的假模型，不调用真实 API
+```
 
-验收重点是 agent 能否完成真实任务，以及整个执行过程能否被检查。
+端到端验收（需要真实模型与 key）：
 
-1. **创建并运行**：让 agent 创建一个脚本、执行它、检查输出，文件与执行结果均真实存在。
-2. **修改已有项目**：让 agent 读取相关文件，完成一个明确修改，并运行对应验证命令。
-3. **根据失败调整**：使用包含可修复错误的任务，agent 能看到 stderr 和退出码，修改后重新执行。
-4. **多步工作**：单个任务可以连续调用多次 Bash，前一次的文件变更能被后一次读取。
-5. **上下文透明**：能够查看所有请求与响应，下一轮请求中包含上一轮工具调用及实际回填结果。
-6. **继续对话**：任务完成后提出后续修改，agent 能利用当前会话上下文继续工作。
-7. **执行控制**：超时或取消后相关进程被终止；轮数用尽时报告未完成。
-8. **大输出处理**：截断明确可见，完整输出可在本地查看，模型收到的内容可核对。
-9. **结果诚实**：命令失败、验证未通过或任务未完成时，最终回答准确说明情况。
+```bash
+OPENAI_API_KEY=... OPENAI_BASE_URL=... OPENAI_MODEL=... python3 scripts/e2e.py
+python3 scripts/e2e.py --only B,F --keep
+```
+
+8 个场景：A 仓库理解（含无 sink 对照）、B 单文件修 bug、C 多文件改动、D 新建文件、E 失败恢复、
+F 同一会话追问、G 真实 CLI 冒烟。每次运行都会新建临时工作区、真实执行，结束后检查磁盘结果与事件记录；
+过程记录写入 `.e2e/<场景>.txt`。
+
+## 已知限制
+
+- 未安装 `ripgrep` 时 grep 的回退实现不解析 `.gitignore`（只跳过常见目录）。
+- bash 继承当前环境变量（API key 会被子进程看到）；没有沙箱、没有命令审批。
+- 上下文只做固定阈值截断，没有压缩/摘要；超长会话最终会撞到模型上下文上限。
+- 会话只在进程内存在，重启不恢复。
+- 单轮内多个工具调用串行执行。
+- 只实现了 `chat/completions` 一种协议（OpenAI 兼容）；Anthropic 等其它协议需要新 adapter。
+- 推理型模型返回的 reasoning 文本会被保留并在后续请求中回传，但不在 TUI 展示。
