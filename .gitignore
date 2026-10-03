@@ -12,3 +12,8 @@ trace.jsonl
 session.json
 session.lock
 /events.jsonl
+node_modules/
+*.tgz
+.npm/
+!tests/fixtures/python-v1/session.json
+!tests/fixtures/python-v1/trace.jsonl

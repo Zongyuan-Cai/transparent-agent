@@ -11,3 +11,6 @@
 | D07 load_skill 按需 | 正文可见，支持用户目录资源且不放宽基础工具 |
 | D08 串行、显式扩展 | 文件顺序/取消可预测，不自动执行项目代码 |
 | D09 TUI 小改 | 先做记录与 inspect，界面不耦合核心迁移 |
+| D10 TypeScript 异步核心 | Node 24、ESM、AsyncGenerator、AbortSignal，保持存储 v1，SDK 调用改为 await |
+| D11 Web 独立会话进程 | UI 不依赖 TUI，同会话 flock 互斥，IPC 协调取消 |
+| D12 Worker 搜索 | JavaScript 正则可终止，无 rg 安装依赖；正则和 ignore 行为有明确迁移差异 |

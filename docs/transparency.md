@@ -12,7 +12,7 @@
 
 Envelope 关联 session/run/request/call，seq 跨恢复继续。每行追加后 flush。默认 `~/.local/state/transparent-agent/sessions/<id>/`，state-dir/trace-dir 覆盖；本地文件用户私有权限，Git 忽略。
 
-api_response_end 的 complete 表示读到 HTTP body 末尾，closed 表示客户端关闭流（包括 SDK 遇到 [DONE]），error/cancelled 表示读取失败/取消。原始记录包含客户端已经收到的全部 body chunks；取消后尚未返回的字节无法记录。Content-Encoding 为压缩格式时需按响应 header 解压字节再读 SSE。
+api_response_end 的 complete 表示读取 HTTP body 并得到完整 [DONE]/finish_reason；closed 表示消费者提前关闭 generator，error/cancelled 表示读取失败/取消。原始记录包含客户端已经收到的 body chunks；取消后尚未返回的字节无法记录。Content-Encoding 为压缩格式时按响应 header 解压，再读 SSE。
 
 ## 凭据例外
 

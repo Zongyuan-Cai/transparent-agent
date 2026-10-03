@@ -1,20 +1,23 @@
-# Model 与 Provider
+# 模型与 Provider
 
-Model 协议的 stream(system, messages, tools) 同步迭代 TextDelta/ReasoningDelta，并以唯一 ModelResponse 结束。core 不依赖 SDK。Provider 接收 model、base_url、认证、超时、usage 开关与 sink；负责编码、流聚合、错误映射、取消和幂等 close。保留同步接口使当前 TUI 和 SDK 调用方式稳定。
+`Model.stream({ system, messages, tools, signal })` 返回 `AsyncGenerator<StreamItem>`：可有多段 text/reasoning，最后必须恰好一份 response。core 依赖协议，不依赖 HTTP 实现。取消通过 AbortSignal；可选 close 释放自定义模型资源。
 
-## OpenAI 兼容 Chat Completions
+```typescript
+interface Model {
+  name: string;
+  stream(input: {
+    system: string; messages: Message[]; tools: ToolSpec[]; signal: AbortSignal;
+  }): AsyncGenerator<StreamItem>;
+  close?(): void | Promise<void>;
+}
+```
 
-POST `<base_url>/chat/completions`，body 包含 model/messages/tools/stream，按配置加入 stream_options.include_usage。实际 body 由 transport 记录，不能从 core 快照猜测。
+内置 `ChatModel` 使用 Node HTTP/HTTPS 调用 OpenAI 兼容 `/chat/completions`。system 作为首条消息，tool_calls 编码为 function，tool 结果保留关联 ID，公开 reasoning 以 reasoning_content 回传。默认请求 usage；端点不支持可关闭 STREAM_USAGE。
 
-- tool delta 按 index 聚合 ID、名称、参数，最终顺序按 index。
-- reasoning 和正文分开；兼容协议要求时回传 reasoning_content。
-- 最后 choices 为空的 usage 帧必须处理。
-- 缺失 ID/名称、异常结束、length/content_filter 或断流不能执行截断工具参数。
+流解析跨网络片段增量解码 UTF-8，识别 SSE data 帧和 [DONE]。工具片段按 index 汇集 id/name/arguments，完整响应后才允许执行。未知 chunk 字段仍原样写入 api_response_parsed。缺 [DONE]/finish_reason、无效 JSON、无效调用 ID、网络断流与非成功 HTTP 都报 ModelError。
 
-## 原始传输
+传输前记录实际 method/URL/headers/body；接收时先记录压缩原始字节，再解压 gzip/deflate/br 并解析。原始 body 是 HTTP 客户端暴露的应用字节，不包含 TLS 包或 HTTP chunk framing。默认没有自动重试；每次请求带独立 request_id。
 
-SDK 解析前保存 method、URL、认证脱敏 headers、请求 body；响应保存 status/headers/每个 body chunk。字节用 base64 保留，UTF-8 跨 chunk 也可重建。成功、非 2xx、解析错误、断流、取消都记录。
+总请求时间受 request_timeout 限制；AbortSignal 销毁请求、响应和流。trace 写失败传播 PersistenceError，不能包装为普通网络错误。Agent 保存完成响应后才执行工具，部分流仅留在 trace/UI。
 
-这里的原始字节是 HTTP 客户端暴露的 body，不是 TLS 包或 HTTP/2 帧。关闭 SDK 隐式重试；未来重试要单独 request_id 和 retry 事件。
-
-新增适配器：实现协议、说明归一化损失、接入同等 trace、运行 fake transport 验收、显式选择。Anthropic/Responses 不能仅改 URL 假装 Chat Completions 兼容。
+验收用真实本地 HTTP 服务比对服务器接收 body 和 trace body，检查跨字节中文、碎片化调用、reasoning/usage/未知字段、压缩、错误、断流、超时和取消。

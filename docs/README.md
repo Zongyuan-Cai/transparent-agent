@@ -1,6 +1,6 @@
 # Transparent Agent 文档库
 
-本库先定义一个独立、完整、可以检查每一步的编码 agent，再指导实现；不是旧代码的逐行说明。「必须」表示运行时契约，可选能力不代表已经实现。重构结果见 [实现状态](implementation.md)，实际使用见 [上手示例](tutorial.md)。
+本库先定义一个独立、完整、可以检查每一步的编码 agent，再指导实现。「必须」表示运行时契约，可选能力不代表已经实现。当前使用 TypeScript；迁移范围见 [迁移契约](typescript-migration.md)，结果见 [实现状态](implementation.md)，使用见 [上手示例](tutorial.md)。
 
 ## 阅读路径
 
@@ -23,7 +23,7 @@
 | SkillCatalog | 资源目录 → 目录/正文 | 按需加载专业说明 |
 | ContextBuilder | 基础提示、AGENTS.md、资源 → system | 可溯源组装 |
 | Template | 名称、参数 → 用户消息 | 显式文本复用 |
-| Extension | 显式 Python 文件 → 工具/观察者 | 扩展执行能力 |
+| Extension | 显式 ESM 模块 → 工具/观察者 | 扩展执行能力 |
 | EventBus | 运行事实 → 通知 | UI 与记录解耦 |
 | TraceRecorder | HTTP/事件/结果 → JSONL | 默认持久透明记录 |
 | SessionStore | 完成历史 ↔ 快照 | 跨进程恢复 |

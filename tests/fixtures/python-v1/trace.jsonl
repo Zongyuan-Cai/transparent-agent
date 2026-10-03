@@ -1,0 +1,2 @@
+{"schema_version": 1, "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "run_id": null, "seq": 1, "type": "session_start", "timestamp": "2024-07-03T09:46:40+00:00", "data": {"workspace": "__WORKSPACE__", "model": "legacy-model"}}
+{"schema_version": 1, "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "run_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "seq": 2, "type": "user_message", "timestamp": "2024-07-03T09:46:41+00:00", "data": {"text": "legacy request 中文"}}

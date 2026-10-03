@@ -1,0 +1,55 @@
+{
+  "name": "transparent-agent",
+  "version": "0.2.0",
+  "description": "A transparent coding agent with independent terminal and Web clients",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "transparent-agent": "bin/agent.mjs",
+    "transparent-agent-web": "bin/web.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "dist/**/*.map",
+    "dist/web/static",
+    "bin",
+    "README.md",
+    "docs",
+    "examples/**/*.mjs",
+    "examples/**/*.md"
+  ],
+  "scripts": {
+    "build": "tsc && node scripts/build.ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.ts",
+    "start": "node bin/agent.mjs",
+    "web": "node bin/web.mjs",
+    "demo": "npm run build && node scripts/web-preview.ts",
+    "check:docs": "node scripts/check-docs.ts",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "diff": "^8.0.0",
+    "fs-ext": "^2.1.1",
+    "minimatch": "^10.0.1",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/fs-ext": "^2.0.3",
+    "typescript": "^5.9.2"
+  },
+  "allowScripts": {
+    "fs-ext@2.1.1": true
+  }
+}

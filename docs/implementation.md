@@ -1,37 +1,26 @@
 # 实现状态
 
-文档库先完成并独立提交（16fb107），然后才实施重构。接口保持原有同步 stream/send/run 方式；默认运行时增加持久透明记录与资源能力。
+初始组件文档先于 Python 重构完成；本分支先写 [迁移契约](typescript-migration.md)，再将完整运行时迁移到严格 TypeScript。Python 旧实现位于提交 `378925b8f6633fe08272ed0567c38b28cee0a086`。
 
-| 组件 | 实现 | 结果 |
+| 组件 | 实现位置 | 行为 |
 | --- | --- | --- |
-| Loop / 数据模型 | agent.py、models.py | 有限迭代、取消补齐、reasoning、重入拒绝 |
-| Provider / HTTP | providers/openai_chat.py、trace.py | 实际 body/原始 chunks、未知字段、错误/断流、关闭客户端 |
-| 基础工具 | tools/ | schema 校验、全文/回填区分、双流原始字节、进程组清理 |
-| Skills | resources.py | YAML 发现、优先级、lazy load、显式调用、相对资源边界 |
-| AGENTS / templates | resources.py、prompt.py | 祖先指令、来源记录、显式模板替换 |
-| Extensions | extensions.py | 显式 Python 模块，注册工具/只读事件观察者 |
-| Events / trace | events.py、trace.py | 全局序号/关联、观察者隔离、必需记录失败停止 |
-| Sessions | sessions.py、storage.py | 原子快照、跨进程恢复、锁、悬空调用不重放 |
-| Runtime / CLI | runtime.py、cli.py | 默认组装、路径提示、inspect/resume、可注入 Model |
-| TUI | tui/app.py | 保留布局/输入/渲染，仅添加资源与 trace 命令 |
-| 独立 Web UI | web/server.py、worker.py、trace_view.py、static/ | HTTP/SSE、会话进程、取消、完整事件检查与响应字节拼接；不导入 TUI |
-
-相对模块路径以仓库 transparent_agent/ 为根。完整接口契约在组件文档中；示例在 tutorial.md 和 examples/skills/test-fix/。
+| Loop / 类型 | src/agent.ts、types.ts | 异步有限迭代、取消补齐、reasoning、重入拒绝 |
+| Provider | src/provider.ts | HTTP 原始编码/压缩字节、SSE、未知字段、超时/取消 |
+| Tools | src/tools/ | 文件、schema、Worker 搜索、shell 进程组 |
+| Skills / AGENTS / templates | src/resources.ts | YAML 目录、按需正文、优先级、来源与相对资源边界 |
+| Extensions | src/runtime.ts | 显式 ESM 注册工具/观察者 |
+| Events / storage | src/events.ts、storage.ts | 必须记录、隔离副本、原子快照、兼容 POSIX flock |
+| Runtime / CLI | src/runtime.ts、arguments.ts、cli.ts | 默认组装、resume/inspect、可注入 Model |
+| TUI | src/tui/render.ts、cli.ts | 轻量输入与流式展示，保留命令/续行/取消 |
+| Web | src/web/、web/static/ | HTTP/SSE、独立 Node 会话子进程、全文检查 |
+| 包 | package.json、bin/、scripts/build.ts | Node 24 ESM、JS 与类型声明、静态资源 |
 
 ## 验证
 
-- 重构前：143 个原有测试通过。
-- 重构后：184 个测试通过，覆盖真实工具、HTTP 字节、长输出、取消、资源、存储失败和两个独立 CLI 进程恢复。非零 shell 退出现在按设计标记为错误观测，相应原测试同步更新；模型仍可根据结果继续修正。
-- scripts/check_docs.py 检查文档本地链接，git diff --check 检查补丁格式。
-- 独立 Python 虚拟环境成功构建并安装 transparent_agent-0.1.0 wheel，仓库外运行安装后的 CLI --help 成功，pip check 通过。旧系统 setuptools 59.6 无法正确读取项目元数据，应使用 README 的虚拟环境安装步骤。
-- API 验收使用本地 HTTP endpoint/fake Model，没有调用真实外部模型，未执行付费真实模型 e2e。
-- 加入 Web 后 195 个测试通过；新增真实 HTTP/worker 的发送、互斥、模型/进程组取消、即时取消、worker 释放、跨服务恢复、SSE 游标、锁、同源边界、长回复全文和 trace 增量索引测试。浏览器验证发送、完整请求/响应检查、资源、停止、HTML 纯文本展示与窄屏布局。
-- Web 静态 HTML/CSS/JS 随 wheel 安装，无 Node/CDN 依赖。scripts/check_web_install.py 在仓库外验证已安装包的页面、资源和配置/会话接口；安装后 transparent-agent-web --help 与 pip check 通过。
+22 项离线集成测试通过，覆盖真实文件/shell/HTTP、旧 Python v1 恢复、发布接口和取消。严格类型检查、30 份 Markdown 本地链接检查通过；npm tarball 在仓库外安装后，CLI、Web 页面/资源、工作进程、模型和 trace 验证通过。浏览器完成写文件与 shell 验证的演示；窄屏工具卡片打开检查区时的事件冒泡问题已修复。命令见 [验证](testing.md)。
 
-## 明确边界
+迁移不消耗真实模型 API；真实模型验收另行使用 e2e 脚本。`.py` 扩展和同步 SDK 调用是明确的 API 迁移点。session/trace 的 schema_version 和 snake_case 字段保持 v1。
 
-文件工具查询有 5 MB/行数等范围限制，grep 有结果/行预览/扫描限制；trace 保存实际返回的完整查询结果，不能声称已读取磁盘全文。原始响应记录到客户端关闭为止，未收到的取消后字节不可记录。认证 header/URL 参数脱敏，正文不自动脱敏。
+## 边界
 
-同步 shell 进程组实现适用 POSIX，Windows 使用 WSL。完整 shell 输出暂存内存并写 JSONL，未增加 artifact streaming 或硬内存限制。恢复使用保存的 system，更新完整项目/资源目录提示需新会话。
-
-MCP、子 agent、长期记忆、自动压缩、树形 session、通用 RPC、OS 沙箱属于可选演进，不宣称已内置。Web 已提供本机 HTTP/SSE 客户端，详见 [Web UI](web-ui.md)。
+POSIX shell/锁在 Windows 使用 WSL。完整 shell 输出和单条 trace 记录仍会暂存内存，无硬内存/磁盘配额。恢复使用保存的 system；更新完整项目/资源提示需新会话。没有 MCP、子 agent、自动摘要、长期记忆或公网认证服务。

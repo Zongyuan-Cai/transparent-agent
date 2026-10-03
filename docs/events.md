@@ -11,12 +11,12 @@
 | model_request_start | 完整 system/messages/tools、step/request_id |
 | api_request | 实际 method/url/headers/body_base64 |
 | api_response_start / chunk / end | 状态、headers、字节、终止 |
-| api_response_parsed | SDK 解析后的 chunk，保留未知 JSON 字段 |
+| api_response_parsed | Provider 解析的完整 chunk，保留未知 JSON 字段 |
 | model_text_delta / model_reasoning_delta | 展示增量 |
 | model_response | 归一化完整响应/usage |
 | tool_call_start / end | 原参数、全量/回填结果、metadata、失败/取消、耗时 |
 | agent_error / finish | 类别、停止原因、统计 |
 
-NullSink 适合 SDK 测试，普通 CompositeSink 隔离观察者异常。默认 runtime 把 TraceRecorder 放必须成功通道，TUI/扩展观察者放容错通道；不得吞记录器异常。
+EventSink 为同步 emit(event)；内存 sink 可用于 SDK 测试。EventBus 先调用必须成功的 recorder，再向每个 observer 投递独立副本。普通观察者异常记录诊断；PersistenceError 始终传播。默认 Runtime 使用 TraceRecorder，TUI/扩展观察者放容错通道。
 
 投递深拷贝，观察者不能修改请求或污染另一个观察者。慢同步观察者会增加耗时。验收连续 seq、多 run、Unicode、恶意修改、坏观察者运行、坏 trace 停止。

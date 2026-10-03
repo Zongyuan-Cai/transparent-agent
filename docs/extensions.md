@@ -1,15 +1,28 @@
 # 扩展
 
-默认不自动导入项目代码；--extension file.py 显式加载。最小接口：
+默认不导入项目代码；`--extension file.mjs`、`.js` 或 `.ts` 显式加载 ESM。TypeScript 扩展须使用 Node 原生类型擦除支持的语法；普通 JavaScript 文件须处于 ESM 包作用域，或使用 `.mjs`。
 
-```python
-def register(api):
-    api.register_tool(MyTool())
-    api.subscribe(my_sink)
+```typescript
+import type { Tool, EventSink } from 'transparent-agent';
+
+export function register(api: {
+  registerTool(tool: Tool): void;
+  subscribe(observer: EventSink): void;
+}) {
+  api.registerTool({
+    name: 'hello', description: 'Return a greeting',
+    parameters: { type: 'object', additionalProperties: false },
+    async run(_args, context) {
+      context.signal.throwIfAborted();
+      return { output: 'hello' };
+    },
+  });
+  api.subscribe({ emit(event) { /* 同步读取独立事件副本。 */ } });
+}
 ```
 
-工具名称冲突/导入/register 失败停止启动并指出来源。工具走统一校验/executor/trace，观察者容错。extension_loaded 记录来源、注册结果。Python 扩展有当前进程权限，这个 API 不是沙箱。
+实际示例见 [event_logger.mjs](../examples/event_logger.mjs)。register 可返回 Promise，启动会等待。重名、坏 schema、导入/register 失败停止启动。工具走统一校验、截断与 trace；观察者异常隔离，PersistenceError 始终传播。extension_loaded 记录路径和新增工具。
 
-MCP 可适配成 tool；子 agent 可以启动子 runtime 并关联 parent_call_id；planner/TODO 用文件/工具；RAG/记忆通过显式检索把来源回填。上述为设计位置，当前不内置。provider 扩展另需注册接口，最小 API 不自动支持。
+扩展有当前进程权限，API 不是沙箱。旧 Python `.py` 扩展不自动转换，需要将注册方法和工具实现迁移到 ESM；register_tool 改为 registerTool，send/tool 执行可异步，取消改为 AbortSignal。
 
-未来上下文/结果变换 hook 必须记录前后，并与通知区分；当前不提供静默改请求 hook。验收显式注册、坏扩展、冲突、schema/trace、观察者修改隔离。
+MCP、子 agent、RAG 可通过 tool 或嵌入 Runtime 扩展，当前不内置。最小注册接口不提供 provider 注册或静默改写请求 hook。验收显式加载、异步注册、冲突、schema/trace 和观察者隔离。
