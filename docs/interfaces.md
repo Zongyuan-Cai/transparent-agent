@@ -1,4 +1,4 @@
-# CLI、SDK 与 TUI
+# CLI、SDK、TUI 与 Web
 
 ```bash
 transparent-agent -C ./project
@@ -16,3 +16,5 @@ send(user_text)、clear、set_model、history 和统计通过公开接口。send
 保留 TUI 的 Enter、反斜杠续行、Ctrl+C、Ctrl+D、/help、/clear、/status、/model、/exit、流式 renderer。只加 /skills、/skill:name、/prompt:name、/trace 的轻入口；不改布局、主题、编辑器。旧 renderer 忽略新事件，持久化由 runtime 负责。
 
 验收原有 UI 测试、print 分流、新命令、离线 inspect。
+
+独立 Web 入口为 transparent-agent-web / python -m transparent_agent.web。Web 后端直接使用 Runtime，不导入 CLI/TUI；按会话隔离进程，以 HTTP 提交和 SSE 展示持久事件。浏览器选择会话、发送/停止任务、读取完整请求/响应/工具输出和下载 trace。服务使用相同状态目录，TUI 持锁的会话不能同时在 Web 运行。见 [Web UI 契约](web-ui.md)。

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Transparent · Agent 工作台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237ee2bc'/%3E%3Cpath d='M8 9h16v4h-6v12h-4V13H8z' fill='%23121a18'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="workspace" id="workspace">
+    <aside class="sidebar" aria-label="会话">
+      <a class="brand" href="/" aria-label="Transparent 首页"><span class="brand-mark">T<span>_</span></span><span>Transparent<small>AGENT WORKSPACE</small></span></a>
+      <button class="new-session" id="new-session"><span>＋</span> 新建会话 <kbd>N</kbd></button>
+      <div class="section-label">会话 <span id="session-count">0</span></div>
+      <div class="session-list" id="session-list"><p class="empty-list">还没有会话</p></div>
+      <div class="sidebar-bottom"><span class="local-dot"></span><span>本地运行<small id="provider-label">读取配置中…</small></span><button class="icon-button" id="config-button" aria-label="查看配置">ⓘ</button></div>
+    </aside>
+    <main class="main-panel">
+      <header class="topbar">
+        <button class="icon-button mobile-only" id="sidebar-toggle" aria-label="切换会话列表">☰</button>
+        <div class="project-context"><span class="folder-icon">⌁</span><span id="project-name">工作区</span><span class="slash">/</span><span id="session-label">新会话</span></div>
+        <div class="topbar-actions"><span class="model-chip" id="model-label">—</span><button class="icon-button" id="clear-session" aria-label="清空当前对话" title="清空当前对话，保留 trace">↺</button><button class="inspect-toggle" id="inspect-toggle" aria-label="切换检查区">◫ <span>检查区</span></button></div>
+      </header>
+      <div class="conversation" id="conversation" aria-label="对话">
+        <div class="welcome" id="welcome">
+          <div class="eyebrow"><span class="local-dot"></span> EVERY STEP, IN THE OPEN</div>
+          <h1>从一个任务开始<span>看清每一步。</span></h1>
+          <p>与 agent 一起写代码。每次模型请求、响应和工具执行，<br>都能在右侧检查区展开查看。</p>
+          <div class="suggestions">
+            <button data-prompt="梳理这个项目的结构，说明主要模块和入口。"><span>⌘</span><strong>梳理项目结构</strong><small>理解模块与调用关系</small><b>↗</b></button>
+            <button data-prompt="运行项目的测试，定位并修复失败的测试。"><span>▷</span><strong>运行并修复测试</strong><small>从实际结果开始排查</small><b>↗</b></button>
+            <button data-prompt="检查最近的代码改动，指出有证据的潜在问题。"><span>±</span><strong>检查最近改动</strong><small>找出问题与影响范围</small><b>↗</b></button>
+          </div>
+          <div class="welcome-note"><span>01</span> 提出任务 <i>→</i> <span>02</span> 实时观察 <i>→</i> <span>03</span> 检查原始记录</div>
+        </div>
+        <div class="messages" id="messages" aria-live="polite"></div>
+      </div>
+      <footer class="composer-area">
+        <div class="run-status" id="run-status"><span class="status-dot"></span><span id="status-label">准备就绪</span><span class="run-meta" id="run-meta"></span></div>
+        <form class="composer" id="composer-form">
+          <label class="sr-only" for="prompt">输入任务</label><textarea id="prompt" placeholder="描述你的任务，或输入 /skill:name…" rows="2"></textarea>
+          <div class="composer-toolbar"><div><button type="button" class="resource-button" id="resource-button">✳ <span>Skills &amp; prompts</span></button><span class="composer-hint">Enter 发送 · Shift Enter 换行</span></div><button type="submit" class="send-button" id="send-button" aria-label="发送任务">↑</button><button type="button" class="stop-button" id="stop-button" hidden>■ 停止</button></div>
+        </form>
+        <div class="composer-caption"><span id="workspace-path">—</span><span>请求与执行记录自动保存</span></div>
+      </footer>
+    </main>
+    <aside class="inspector" aria-label="运行检查区">
+      <header class="inspector-header"><div><span class="inspect-symbol">◫</span><strong>运行检查区</strong></div><div><span class="live-badge" id="stream-state"><span></span> LIVE</span><button class="icon-button inspector-close" id="inspector-close" aria-label="关闭检查区">×</button></div></header>
+      <div class="trace-summary"><div><b id="request-count">0</b><span>API 请求</span></div><div><b id="tool-count">0</b><span>工具调用</span></div><div><b id="event-count">0</b><span>事件</span></div></div>
+      <div class="trace-controls"><div class="trace-tabs" role="tablist" aria-label="事件筛选"><button role="tab" aria-selected="true" data-filter="all" class="active">全部</button><button role="tab" aria-selected="false" data-filter="request">请求</button><button role="tab" aria-selected="false" data-filter="response">响应</button><button role="tab" aria-selected="false" data-filter="tool">工具</button></div><label class="search"><span>⌕</span><input type="search" id="event-search" placeholder="搜索事件、工具或 request ID" aria-label="搜索事件"></label></div>
+      <div class="event-list" id="event-list"><div class="trace-empty"><span>⌁</span><strong>等待第一条记录</strong><p>发送任务后，完整运行过程<br>会出现在这里。</p></div></div>
+      <div class="trace-pagination"><button id="previous-page" class="icon-button" aria-label="上一页">‹</button><span id="page-label">0 条记录</span><button id="next-page" class="icon-button" aria-label="下一页">›</button><button id="follow-events" class="follow-button active" aria-pressed="true">跟随</button></div>
+      <section class="event-detail" id="event-detail" hidden><div class="detail-heading"><strong id="detail-title">事件详情</strong><div><button id="copy-detail" class="icon-button" aria-label="复制详情">⧉</button><button id="close-detail" class="icon-button" aria-label="关闭详情">×</button></div></div><div class="detail-tabs" id="detail-tabs"></div><pre id="detail-content" tabindex="0"></pre></section>
+      <footer class="inspector-footer"><span>TRACE · JSONL</span><a id="download-trace" href="#" download aria-disabled="true">↓ 下载记录</a></footer>
+    </aside>
+  </div>
+  <dialog id="new-dialog"><form id="new-form"><div class="dialog-heading"><span class="eyebrow">NEW SESSION</span><button type="button" class="icon-button" data-close-dialog aria-label="关闭">×</button></div><h2>新建一个会话</h2><p>选择工作区与模型，开始独立的 agent 会话。</p><label>工作区<input id="new-workspace" required autocomplete="off"></label><label>模型<input id="new-model" required autocomplete="off"></label><p class="dialog-error" id="new-error" hidden></p><div class="dialog-actions"><button type="button" class="secondary-button" data-close-dialog>取消</button><button class="primary-button" id="create-button">创建会话 →</button></div></form></dialog>
+  <dialog id="resource-dialog"><div class="dialog-heading"><span class="eyebrow">RESOURCES</span><button class="icon-button" data-close-dialog aria-label="关闭">×</button></div><h2>Skills &amp; prompts</h2><p>选择资源后会将命令填入输入框。</p><div id="resource-list"></div></dialog>
+  <dialog id="config-dialog"><div class="dialog-heading"><span class="eyebrow">LOCAL RUNTIME</span><button class="icon-button" data-close-dialog aria-label="关闭">×</button></div><h2>服务端配置</h2><dl id="config-detail"></dl><p>配置来自服务端环境与 .env 文件。API key 留在服务端；修改配置后重启 Web 服务生效。</p></dialog>
+  <dialog id="clear-dialog"><div class="dialog-heading"><span class="eyebrow">CLEAR CONVERSATION</span><button class="icon-button" data-close-dialog aria-label="关闭">×</button></div><h2>清空当前对话？</h2><p>模型上下文将重新开始，已有 trace 仍可检查和下载。</p><div class="dialog-actions"><button class="secondary-button" data-close-dialog>取消</button><button class="primary-button" id="confirm-clear">清空对话</button></div></dialog>
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>

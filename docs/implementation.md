@@ -14,6 +14,7 @@
 | Sessions | sessions.py、storage.py | 原子快照、跨进程恢复、锁、悬空调用不重放 |
 | Runtime / CLI | runtime.py、cli.py | 默认组装、路径提示、inspect/resume、可注入 Model |
 | TUI | tui/app.py | 保留布局/输入/渲染，仅添加资源与 trace 命令 |
+| 独立 Web UI | web/server.py、worker.py、trace_view.py、static/ | HTTP/SSE、会话进程、取消、完整事件检查与响应字节拼接；不导入 TUI |
 
 相对模块路径以仓库 transparent_agent/ 为根。完整接口契约在组件文档中；示例在 tutorial.md 和 examples/skills/test-fix/。
 
@@ -24,6 +25,8 @@
 - scripts/check_docs.py 检查文档本地链接，git diff --check 检查补丁格式。
 - 独立 Python 虚拟环境成功构建并安装 transparent_agent-0.1.0 wheel，仓库外运行安装后的 CLI --help 成功，pip check 通过。旧系统 setuptools 59.6 无法正确读取项目元数据，应使用 README 的虚拟环境安装步骤。
 - API 验收使用本地 HTTP endpoint/fake Model，没有调用真实外部模型，未执行付费真实模型 e2e。
+- 加入 Web 后 195 个测试通过；新增真实 HTTP/worker 的发送、互斥、模型/进程组取消、即时取消、worker 释放、跨服务恢复、SSE 游标、锁、同源边界、长回复全文和 trace 增量索引测试。浏览器验证发送、完整请求/响应检查、资源、停止、HTML 纯文本展示与窄屏布局。
+- Web 静态 HTML/CSS/JS 随 wheel 安装，无 Node/CDN 依赖。scripts/check_web_install.py 在仓库外验证已安装包的页面、资源和配置/会话接口；安装后 transparent-agent-web --help 与 pip check 通过。
 
 ## 明确边界
 
@@ -31,4 +34,4 @@
 
 同步 shell 进程组实现适用 POSIX，Windows 使用 WSL。完整 shell 输出暂存内存并写 JSONL，未增加 artifact streaming 或硬内存限制。恢复使用保存的 system，更新完整项目/资源目录提示需新会话。
 
-MCP、子 agent、长期记忆、自动压缩、树形 session、Web/RPC、OS 沙箱属于可选演进，不宣称已内置。
+MCP、子 agent、长期记忆、自动压缩、树形 session、通用 RPC、OS 沙箱属于可选演进，不宣称已内置。Web 已提供本机 HTTP/SSE 客户端，详见 [Web UI](web-ui.md)。

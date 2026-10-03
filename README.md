@@ -1,8 +1,8 @@
 # Transparent Agent
 
-参照 pi 分层思想实现的本地 Python 编码 agent。**每次模型请求、API 原始返回、工具参数与结果都可以检查**。默认 CLI 保存 JSONL trace 和可恢复会话，保留轻量 TUI。
+参照 pi 分层思想实现的本地 Python 编码 agent。**每次模型请求、API 原始返回、工具参数与结果都可以检查**。CLI 与独立 Web UI 共用 runtime、JSONL trace 和可恢复会话，保留轻量 TUI。
 
-从 [文档库](docs/README.md) 开始阅读完整设计；代码对照与验收见 [实现状态](docs/implementation.md)。本轮先独立提交文档，再按契约重构。
+从 [文档库](docs/README.md) 开始阅读完整设计；代码对照与验收见 [实现状态](docs/implementation.md)。
 
 ## 安装与运行
 
@@ -28,6 +28,28 @@ OPENAI_MODEL=your-tool-capable-model
 优先级 CLI → 环境 → 启动目录 .env → 用户配置 → 默认。支持原生 function calling 的 OpenAI 兼容 Chat Completions，其它协议需要适配器。
 
 使用独立虚拟环境和较新 pip，避免旧系统构建工具忽略 pyproject.toml 元数据。构建 backend 要求 setuptools ≥ 68。
+
+## 独立 Web UI
+
+```bash
+transparent-agent-web -C ~/my-project --port 8765
+# 或无需 console script：
+python -m transparent_agent.web -C ~/my-project --port 8765
+```
+
+打开 http://127.0.0.1:8765。Web 不导入 TUI，也不需要 Node.js 或前端构建；静态资源随 Python 包安装。配置与 API key 从服务端环境/.env 读取。
+
+- 会话列表：创建、选择和恢复工作区会话。
+- 对话区：流式文字、推理文本、工具卡片、停止任务、Skills/模板和清空对话。
+- 检查区：筛选、搜索和分页；展开完整请求 body、原始响应、工具全文与 JSON；下载 trace。
+
+每个活动会话使用独立工作进程；断开浏览器不停止任务。默认仅本机访问，Windows 使用 WSL。TUI 会话使用相同存储目录，同一会话的运行互斥。接口、启动选项与边界见 [Web UI 文档](docs/web-ui.md)。
+
+可用不需要真实 key 的离线演示检查页面（临时工作区与模拟模型）：
+
+```bash
+python scripts/web_preview.py --port 8766
+```
 
 ## 检查与恢复
 
@@ -100,15 +122,15 @@ JSON Schema 校验在执行前；坏参数不产生副作用。文件/skill 路�
 
 ## 架构与验证
 
-runtime.py 组装资源、扩展、存储、provider 和 agent；loop 保持有限反馈循环；provider transport 记录实际 body；TUI 只展示事件。SDK 可直接嵌入 Agent，或用 Runtime 上下文管理器获得默认持久记录。
+runtime.py 组装资源、扩展、存储、provider 和 agent；loop 保持有限反馈循环；provider transport 记录实际 body；TUI 和 Web 分别展示事件。SDK 可直接嵌入 Agent，或用 Runtime 上下文管理器获得默认持久记录。
 
 ```bash
 python3 -m pytest -q
 python3 -m transparent_agent --help
 ```
 
-测试覆盖 loop/TUI、HTTP 字节、长输出、取消、资源、会话/锁和两个真实 CLI 进程的恢复，使用本地 fake HTTP，不消耗真实 API。真实模型验收另用 scripts/e2e.py，需要有效配置。
+测试覆盖 loop/TUI、HTTP 字节、长输出、取消、资源、会话/锁、独立 CLI 进程恢复，以及真实 Web HTTP、工作进程取消和 SSE 续传，使用本地 fake HTTP，不消耗真实 API。真实模型验收另用 scripts/e2e.py，需要有效配置。
 
 ## 当前边界
 
-没有自动摘要、树形会话、回滚、内置 MCP/子 agent/长期记忆或 Web/RPC；位置见 [演进](docs/evolution.md)。长对话可能超 context；查询有范围/条数限制；完整 shell 输出占内存/磁盘。bash 继承环境且无 OS 沙箱，需要隔离时使用容器/系统机制。TUI 展示摘要，完整检查通过 trace/inspect。
+没有自动摘要、树形会话、回滚、内置 MCP/子 agent/长期记忆或通用 RPC；位置见 [演进](docs/evolution.md)。长对话可能超 context；查询有范围/条数限制；完整 shell 输出占内存/磁盘。bash 继承环境且无 OS 沙箱，需要隔离时使用容器/系统机制。TUI 展示摘要，完整检查通过 Web、trace/inspect。
