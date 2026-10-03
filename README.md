@@ -1,169 +1,114 @@
 # Transparent Agent
 
-一个本地的轻量终端编码 agent：理解任务、检查项目、读改文件、执行命令、根据结果迭代、验证后汇报。
+参照 pi 分层思想实现的本地 Python 编码 agent。**每次模型请求、API 原始返回、工具参数与结果都可以检查**。默认 CLI 保存 JSONL trace 和可恢复会话，保留轻量 TUI。
 
-本项目最终目标是 **Transparent Agent**（agent 的每一步都可被外部检查），但当前版本 **只实现 agent 本身**。
-透明层尚未实现，架构上只保留了接入点：agent core 通过事件（events）向外通知，从不依赖任何观察者存在。
-把未来的透明组件全部删掉，agent 的行为和 TUI 不受任何影响。
-
-## 当前状态
-
-已实现（V1）：
-
-- 原生 tool calling 的迭代 agent loop（模型自主决定调用哪些工具、调用多少次，不预设流程）；
-- 七个工具：`read` `write` `edit` `ls` `find` `grep` `bash`；
-- 流式输出、持久多轮会话、Ctrl+C 中断、常用斜杠命令的轻量 TUI；
-- OpenAI 兼容的模型适配层（`chat/completions` + 流式 + 工具调用），换 provider 只需新增一个 adapter；
-- 可选事件钩子（sink），默认无观察者时行为完全一致；
-- 工具输出截断、bash 超时/进程组清理、工作区路径越界防护。
-
-未实现（有意留到后续版本）：透明/检查界面、多 agent、子 agent、计划器、todo、长期记忆、RAG、MCP、
-浏览器自动化、上下文压缩、检查点回滚、跨进程会话恢复、Web UI、基准框架。
+从 [文档库](docs/README.md) 开始阅读完整设计；代码对照与验收见 [实现状态](docs/implementation.md)。本轮先独立提交文档，再按契约重构。
 
 ## 安装与运行
 
-依赖：Python ≥ 3.10，`openai` SDK（≥1.0）。grep 会优先使用 `rg`，没有 `ripgrep` 时自动退回 Python 实现。
+Python ≥ 3.10。shell 与进程组清理针对 Linux/macOS，Windows 推荐 WSL。grep 优先 rg，没有时 Python 回退。
 
 ```bash
-pip install -e .                      # 可选：装好 console script（需要较新的 pip/setuptools）
-python -m transparent_agent           # 在当前目录启动（未安装时在仓库根目录运行）
-transparent-agent -C ~/my-project     # 指定工作区
-transparent-agent -p "fix the failing tests" -C ~/my-project   # 单次非交互
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e '.[dev]'
+python -m transparent_agent -C ~/my-project
+transparent-agent -C ~/my-project -p '修复失败测试并验证'
 ```
 
-## 配置
-
-把 key 写进用户级配置文件后，在任意目录直接 `transparent-agent` 即可：
+模型配置写入 `~/.config/transparent-agent/.env` 或启动目录 `.env`：
 
 ```ini
-# ~/.config/transparent-agent/.env
+OPENAI_API_KEY=your-api-key
 OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-flash
-OPENAI_API_KEY=sk-...
+OPENAI_MODEL=your-tool-capable-model
 ```
 
-优先级：CLI 参数 → 环境变量 → 当前目录 `.env` → `~/.config/transparent-agent/.env`。
-已在环境中的变量不会被 `.env` 覆盖；`.env` 支持 `export` 前缀、引号和 `#` 注释，
-上面配置表里的任何变量都可以写进去（例如 `MAX_STEPS=60`）。
+优先级 CLI → 环境 → 启动目录 .env → 用户配置 → 默认。支持原生 function calling 的 OpenAI 兼容 Chat Completions，其它协议需要适配器。
 
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `OPENAI_API_KEY` | 无（必填） | API key |
-| `OPENAI_BASE_URL` | OpenAI 官方 | 任意 OpenAI 兼容端点，例如 `https://api.deepseek.com` |
-| `OPENAI_MODEL` | `gpt-4o` | 支持 function calling 的模型 |
-| `MAX_STEPS` | `40` | 每个用户回合允许的模型请求次数上限 |
-| `BASH_TIMEOUT_S` / `MAX_BASH_TIMEOUT_S` | `120` / `600` | bash 默认/最大超时 |
-| `MAX_TOOL_OUTPUT_CHARS` | `30000` | 单次工具结果回填给模型的最大长度（超出中间截断并注明） |
-| `MODEL_TIMEOUT_S` | `300` | 单次模型请求超时 |
-| `STREAM_USAGE` | `true` | 是否向端点请求流式 usage；端点不支持时设为 `false` |
-| `WORKSPACE_DIR` | 当前目录 | 默认工作区 |
+使用独立虚拟环境和较新 pip，避免旧系统构建工具忽略 pyproject.toml 元数据。构建 backend 要求 setuptools ≥ 68。
 
-## 交互
+## 检查与恢复
 
-```text
-$ python -m transparent_agent -C ~/project
-workspace: /home/you/project
-model: deepseek-chat  (https://api.deepseek.com)
-
-> Find why the parser tests fail and fix them.
-
-● Inspecting the project
-  → ls .
-  → read tests/test_parser.py
-  → grep /parse_config/ in src
-
-● The failure is in parse_config.
-  → edit src/parser.py
-
-● Running the tests.
-  → bash pytest -q
-  8 passed
-✓ done (5 steps, 31.2k tokens)
-
->
-```
-
-- Enter 发送；行尾 `\` 续行。
-- `Ctrl+C` 中断当前生成或命令（命令的整个进程组会被终止），会话继续可用；提示符处 `Ctrl+C` 取消当前输入。
-- `Ctrl+D` 或 `/exit` 退出。
-- 命令：`/help` `/clear` `/status` `/model [NAME]` `/exit`。
-- `-p/--print` 非交互模式：助手文本到 stdout，工具活动到 stderr，便于脚本化。
-
-## 架构
-
-```text
-TUI（tui/）        ← 只消费事件做展示，agent 不感知
-     │  events（可选 sink）
-Agent Core（agent.py）  ← 迭代循环、会话历史、工具分派
-     │
-Model Interface（models.py） → Provider（providers/openai_chat.py）
-     │
-Tools / Environment（tools/：base fs search shell）
-```
-
-| 模块 | 职责 |
-| --- | --- |
-| `agent.py` | 迭代循环：构造请求 → 流式接收 → 执行工具 → 回填结果 → 再次请求；终止、取消、步数上限、历史一致性 |
-| `models.py` | 归一化类型（Message/ToolCall/ModelResponse/Usage）与 Model 协议 |
-| `providers/openai_chat.py` | OpenAI 兼容适配器：请求编码、SSE 增量重组（工具调用按 index 拼接）、usage、错误映射 |
-| `tools/` | 工具实现、注册表与执行器（预期失败转成给模型的观测结果）、工作区路径防护 |
-| `events.py` | 事件类型与 sink 协议（`NullSink` 默认，`CompositeSink` 组合） |
-| `tui/` | 渲染（事件 → 终端输出）与 REPL（输入、命令、中断） |
-
-设计原则：
-
-- **agent core 不依赖任何接口层**：不打印、不知道 TUI 存在；`NullSink` 下行为完全一致。
-- **模型抽象**：core 只看到归一化消息/工具/流式事件；provider 细节留在 adapter 内。
-- **工具失败是观测**：不存在的文件、patch 不匹配、命令非零退出、超时都是结构化结果回填给模型，不终止程序。
-- **事件是通知，不是控制流**：sink 抛异常不会影响 agent；事件 payload 是纯 JSON 可序列化数据。
-
-### 事件
-
-`agent_start` · `user_message` · `model_request_start`（完整 system + messages + tools 快照）·
-`model_text_delta` · `model_response`（文本、工具调用、finish_reason、usage）·
-`tool_call_start` / `tool_call_end`（call_id、参数、输出、is_error、耗时、是否取消）·
-`agent_error` · `agent_finish`（stop_reason、步数、usage、耗时）。
-
-外部观察者接入示例见 `examples/event_logger.py`（把每个事件写成 JSONL，与 TUI 同时挂载）。
-
-## 工具
-
-| 工具 | 说明 |
-| --- | --- |
-| `read` | 读文本文件，带行号；支持 `start_line`/`end_line`；大文件只返回前 2000 行并注明；二进制文件明确报错 |
-| `write` | 创建/整体覆盖文件，自动建父目录 |
-| `edit` | 精确字符串替换（`old_string`→`new_string`）；要求唯一或 `replace_all`；失败时说明原因；返回小 diff |
-| `ls` | 列目录（非递归，最多 200 条） |
-| `find` | 按文件名 glob 递归查找，可限定 file/dir |
-| `grep` | 正则搜索内容，返回 `path:line:text`；优先 `rg`，无则 Python 回退；支持 `glob`/`ignore_case` |
-| `bash` | 在工作区执行命令；返回 stdout/stderr/退出码/耗时/超时状态；进程组超时或取消时整体终止 |
-
-约束：所有路径解析后必须位于工作区内（含符号链接解析），逃逸请求作为错误返回给模型；
-bash 默认 cwd 为工作区，单次命令内的 `cd`/环境变量不影响后续调用；输出超限时中间截断并注明。
-
-## 测试
+启动显示 trace.jsonl 和 session.json 的绝对路径，默认在 `~/.local/state/transparent-agent/sessions/<id>/`。`--state-dir` 改状态根，`--trace-dir` 改新会话 trace 根，`/trace` 显示当前路径。
 
 ```bash
-python3 -m pytest -q          # 131 个单元/集成测试，使用脚本化的假模型，不调用真实 API
+transparent-agent --inspect /absolute/path/trace.jsonl
+transparent-agent --resume /absolute/path/session.json
+transparent-agent --resume /absolute/path/session.json -p '继续验证'
 ```
 
-端到端验收（需要真实模型与 key）：
+inspect 离线显示完整事件，无需 key，不执行工具。resume 恢复历史并追加原 trace，不重放工具；悬空调用补「状态未知」错误。一个 session 只允许一个活动进程持锁。
+
+记录包括：
+
+- 完整 system、历史、schema、归一化响应和 API 公开的 reasoning。
+- 实际 HTTP method/URL/headers/body，以及响应状态、headers、原始字节与未知字段；字节以 base64 保存。
+- 工具原始参数、完整结果、截断回填结果、metadata、失败/取消和耗时；shell 双流也保存原始字节。
+- 上下文和资源来源、session/run/request/call 关联、严格递增序号。
+
+认证 header/URL 参数脱敏，任务正文和源码原样保存。记录本地存储、Git 忽略、不会自动上传。trace/session 写失败停止运行，普通观察者失败不阻断。详见 [透明记录](docs/transparency.md)。
+
+## Skills、上下文与模板
+
+读取项目根到 workspace 的 AGENTS.md。skill 从 `.agents/skills/<name>/SKILL.md`、`~/.config/transparent-agent/skills`、`~/.agents/skills` 发现；`--skill-dir` 可重复增加目录。
+
+```markdown
+---
+name: test-fix
+description: Diagnose and fix failing tests. Use when a test suite fails.
+---
+读取失败测试和相关实现，复现问题，针对性修复，再运行相关测试。
+```
+
+system 只包含目录元数据，模型用 load_skill 按需读正文/相对资源；用户用 `/skill:test-fix <任务>` 显式加载。disable-model-invocation=true 限制为显式命令。优先级为显式目录、项目、用户，同名冲突和坏资源有诊断。
+
+模板在 `.agents/prompts/<name>.md` 或用户配置 prompts，通过 `/prompt:<name> <参数>` 展开 `$ARGUMENTS`。只替换文字，不执行 shell。见 [Skills](docs/skills.md)、[上下文](docs/context.md)、[模板](docs/prompts.md)、[上手示例](docs/tutorial.md)。
+
+## 工具与扩展
+
+| 工具 | 行为 |
+| --- | --- |
+| read | 带行号、支持范围，默认前 2000 行 |
+| write | 创建/完整覆盖 |
+| edit | 唯一精确替换，或显式 replace_all |
+| ls | 当前层目录，最多 200 项 |
+| find / grep | glob 路径 / 正则内容查询 |
+| bash | shell、双流、退出码、超时、进程组清理 |
+| load_skill | 发现 skill 时加入，受控按需读取 |
+
+JSON Schema 校验在执行前；坏参数不产生副作用。文件/skill 路径 resolve 后不得越界。工具串行，失败作为错误观测供模型纠正。模型输出截断，trace 保留本次返回全文；分页、匹配数量和扫描范围限制分别说明。
+
+--extension file.py 显式导入 Python 扩展，register(api) 注册工具/观察者；有当前进程权限。详见 [工具](docs/tools/README.md)、[扩展](docs/extensions.md)。
+
+## 交互与配置
+
+保留 Enter、反斜杠续行、Ctrl+C、Ctrl+D、流式渲染和 `/help`、`/clear`、`/status`、`/model [NAME]`、`/exit`。新增 `/skills`、`/skill:NAME`、`/prompt:NAME`、`/trace`。print 模式助手文字到 stdout，工具/路径到 stderr。
+
+| 配置 | 默认 |
+| --- | --- |
+| MAX_STEPS | 40 模型请求/提交 |
+| MODEL_TIMEOUT_S | 300 秒 |
+| BASH_TIMEOUT_S / MAX_BASH_TIMEOUT_S | 120 / 600 秒 |
+| MAX_TOOL_OUTPUT_CHARS | 30000 字符 |
+| STREAM_USAGE | true |
+| WORKSPACE_DIR | 当前目录 |
+| TRANSPARENT_AGENT_STATE_DIR | ~/.local/state/transparent-agent |
+
+数字必须正且有限；shell 参数超过最大超时时注明并钳制。见 [配置](docs/configuration.md)。
+
+## 架构与验证
+
+runtime.py 组装资源、扩展、存储、provider 和 agent；loop 保持有限反馈循环；provider transport 记录实际 body；TUI 只展示事件。SDK 可直接嵌入 Agent，或用 Runtime 上下文管理器获得默认持久记录。
 
 ```bash
-OPENAI_API_KEY=... OPENAI_BASE_URL=... OPENAI_MODEL=... python3 scripts/e2e.py
-python3 scripts/e2e.py --only B,F --keep
+python3 -m pytest -q
+python3 -m transparent_agent --help
 ```
 
-8 个场景：A 仓库理解（含无 sink 对照）、B 单文件修 bug、C 多文件改动、D 新建文件、E 失败恢复、
-F 同一会话追问、G 真实 CLI 冒烟。每次运行都会新建临时工作区、真实执行，结束后检查磁盘结果与事件记录；
-过程记录写入 `.e2e/<场景>.txt`。
+测试覆盖 loop/TUI、HTTP 字节、长输出、取消、资源、会话/锁和两个真实 CLI 进程的恢复，使用本地 fake HTTP，不消耗真实 API。真实模型验收另用 scripts/e2e.py，需要有效配置。
 
-## 已知限制
+## 当前边界
 
-- 未安装 `ripgrep` 时 grep 的回退实现不解析 `.gitignore`（只跳过常见目录）。
-- bash 继承当前环境变量（API key 会被子进程看到）；没有沙箱、没有命令审批。
-- 上下文只做固定阈值截断，没有压缩/摘要；超长会话最终会撞到模型上下文上限。
-- 会话只在进程内存在，重启不恢复。
-- 单轮内多个工具调用串行执行。
-- 只实现了 `chat/completions` 一种协议（OpenAI 兼容）；Anthropic 等其它协议需要新 adapter。
-- 推理型模型返回的 reasoning 文本会被保留并在后续请求中回传，但不在 TUI 展示。
+没有自动摘要、树形会话、回滚、内置 MCP/子 agent/长期记忆或 Web/RPC；位置见 [演进](docs/evolution.md)。长对话可能超 context；查询有范围/条数限制；完整 shell 输出占内存/磁盘。bash 继承环境且无 OS 沙箱，需要隔离时使用容器/系统机制。TUI 展示摘要，完整检查通过 trace/inspect。

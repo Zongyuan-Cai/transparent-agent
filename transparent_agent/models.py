@@ -75,7 +75,14 @@ class TextDelta:
     text: str
 
 
-StreamItem = Union[TextDelta, ModelResponse]
+@dataclass
+class ReasoningDelta:
+    """Provider-visible reasoning, kept separately from the final answer."""
+
+    text: str
+
+
+StreamItem = Union[TextDelta, ReasoningDelta, ModelResponse]
 
 
 class Model(Protocol):
@@ -119,7 +126,7 @@ def usage_to_dict(usage: Usage | None) -> dict | None:
 
 
 def create_model(*, model: str, api_key: str | None, base_url: str | None, timeout: float,
-                 stream_usage: bool = True) -> Model:
+                 stream_usage: bool = True, sink=None) -> Model:
     """Build the configured provider adapter."""
     from .providers.openai_chat import OpenAIChatModel
 
@@ -129,4 +136,5 @@ def create_model(*, model: str, api_key: str | None, base_url: str | None, timeo
         base_url=base_url,
         timeout=timeout,
         stream_usage=stream_usage,
+        sink=sink,
     )

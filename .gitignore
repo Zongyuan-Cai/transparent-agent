@@ -7,3 +7,8 @@ dist/
 .venv/
 .e2e/
 .env
+.transparent-agent/
+trace.jsonl
+session.json
+session.lock
+/events.jsonl

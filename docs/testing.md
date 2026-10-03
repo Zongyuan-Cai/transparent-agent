@@ -16,6 +16,7 @@
 ```bash
 python3 -m pytest -q
 python3 -m transparent_agent --help
+python3 scripts/check_docs.py
 ```
 
 离线端到端使用 fake Model，但真实文件/shell/skill、trace/session，恢复后再继续。provider 另用 mock HTTP 验证真实编码。真实 API 验收用 scripts/e2e.py，需要有效 key；未运行必须明确说明。

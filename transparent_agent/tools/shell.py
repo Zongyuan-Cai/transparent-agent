@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import os
+import math
+import base64
 import signal
 import subprocess
 import tempfile
 import time
 from pathlib import Path
 
-from .base import Tool, ToolContext, ToolError, ToolResult, rel_path, require_str, resolve_in_workspace
-
-OUTPUT_HEAD_BYTES = 1_000_000
-OUTPUT_TAIL_BYTES = 1_000_000
+from .base import Tool, ToolContext, ToolError, ToolResult, ToolInterrupted, rel_path, require_str, resolve_in_workspace
 
 
 def tool_bash(args: dict, ctx: ToolContext) -> ToolResult:
@@ -21,7 +20,7 @@ def tool_bash(args: dict, ctx: ToolContext) -> ToolResult:
 
     timeout = args.get("timeout_s")
     if timeout is not None:
-        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0:
             raise ToolError("argument 'timeout_s' must be a positive number of seconds")
         timeout = float(timeout)
         if timeout > ctx.max_bash_timeout:
@@ -39,6 +38,7 @@ def tool_bash(args: dict, ctx: ToolContext) -> ToolResult:
 
     started = time.monotonic()
     timed_out = False
+    interrupted = False
     with tempfile.TemporaryDirectory(prefix="ta-bash-") as tmp:
         stdout_path = Path(tmp) / "stdout"
         stderr_path = Path(tmp) / "stderr"
@@ -60,16 +60,23 @@ def tool_bash(args: dict, ctx: ToolContext) -> ToolResult:
         except subprocess.TimeoutExpired:
             timed_out = True
             returncode = _terminate(process)
+        except KeyboardInterrupt:
+            interrupted = True
+            returncode = _terminate(process)
         except BaseException:
             # KeyboardInterrupt (user cancellation) or anything else: never leave
             # the command's process group running.
             _terminate(process)
             raise
+        else:
+            _terminate(process)  # also clean descendants of a normally exited shell
         duration = time.monotonic() - started
-        stdout, stdout_clipped = _read_clipped(stdout_path)
-        stderr, stderr_clipped = _read_clipped(stderr_path)
+        stdout_bytes = stdout_path.read_bytes()
+        stderr_bytes = stderr_path.read_bytes()
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
 
-    status = "timed_out" if timed_out else "completed"
+    status = "cancelled" if interrupted else "timed_out" if timed_out else "completed"
     lines = [
         f"status: {status}",
         f"exit_code: {_describe_exit(returncode)}",
@@ -80,8 +87,6 @@ def tool_bash(args: dict, ctx: ToolContext) -> ToolResult:
         lines.append(note.strip())
     if timed_out:
         lines.append(f"[command exceeded the {timeout:g}s timeout and its process group was terminated]")
-    if stdout_clipped or stderr_clipped:
-        lines.append("[output was very large; only the beginning and end are shown]")
     lines.append("--- stdout ---")
     lines.append(stdout.rstrip("\n") if stdout.strip() else "(empty)")
     lines.append("--- stderr ---")
@@ -98,7 +103,14 @@ def tool_bash(args: dict, ctx: ToolContext) -> ToolResult:
         display_parts.append(stderr.rstrip("\n"))
     display = "\n".join(display_parts) if display_parts else "(no output)"
 
-    return ToolResult("\n".join(lines), display=display)
+    result = ToolResult("\n".join(lines), is_error=interrupted or timed_out or returncode != 0, display=display,
+                      metadata={"stdout": stdout, "stderr": stderr, "exit_code": returncode,
+                                "stdout_base64": base64.b64encode(stdout_bytes).decode("ascii"),
+                                "stderr_base64": base64.b64encode(stderr_bytes).decode("ascii"),
+                                "elapsed": duration, "timeout": timed_out, "cancelled": interrupted})
+    if interrupted:
+        raise ToolInterrupted(result)
+    return result
 
 
 def _terminate(process: subprocess.Popen) -> int:
@@ -115,6 +127,11 @@ def _terminate(process: subprocess.Popen) -> int:
         except ProcessLookupError:
             pass
         process.wait()
+    # The shell can exit before children that ignore SIGTERM.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
     return process.returncode if process.returncode is not None else -signal.SIGKILL
 
 
@@ -128,25 +145,13 @@ def _describe_exit(returncode: int) -> str:
     return f"killed by signal {name}"
 
 
-def _read_clipped(path: Path) -> tuple[str, bool]:
-    size = path.stat().st_size
-    if size <= OUTPUT_HEAD_BYTES + OUTPUT_TAIL_BYTES:
-        return path.read_bytes().decode("utf-8", errors="replace"), False
-    with open(path, "rb") as handle:
-        head = handle.read(OUTPUT_HEAD_BYTES)
-        handle.seek(size - OUTPUT_TAIL_BYTES)
-        tail = handle.read(OUTPUT_TAIL_BYTES)
-    text = head.decode("utf-8", errors="replace") + tail.decode("utf-8", errors="replace")
-    return text, True
-
-
 TOOLS = [
     Tool(
         name="bash",
         description=(
             "Run a shell command from the workspace and return stdout, stderr, exit code and "
-            "duration. Use it for tests, builds, git, scripts. Non-zero exit codes are normal "
-            "observations, not tool failures. Interactive commands do not work."
+            "duration. Use it for tests, builds, git, scripts. Non-zero exit codes are error "
+            "observations the model can recover from. Interactive commands do not work."
         ),
         parameters={
             "type": "object",

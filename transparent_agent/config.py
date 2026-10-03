@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import MutableMapping
+from urllib.parse import urlsplit
 
 DEFAULT_MODEL = "gpt-4o"
 
@@ -93,6 +95,29 @@ class Config:
     request_timeout: float = 300.0
     stream_usage: bool = True
 
+    def __post_init__(self):
+        self.workspace = Path(self.workspace).expanduser().resolve()
+        if not self.workspace.is_dir():
+            raise ConfigError(f"Workspace is not a directory: {self.workspace}")
+        for field, label in (("max_steps", "MAX_STEPS"), ("max_output_chars", "MAX_TOOL_OUTPUT_CHARS")):
+            value = getattr(self, field)
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                raise ConfigError(f"{label} must be a positive integer")
+        for field, label in (("bash_timeout", "BASH_TIMEOUT_S"), ("max_bash_timeout", "MAX_BASH_TIMEOUT_S"),
+                             ("request_timeout", "MODEL_TIMEOUT_S")):
+            value = getattr(self, field)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value <= 0:
+                raise ConfigError(f"{label} must be a finite positive number")
+        if self.bash_timeout > self.max_bash_timeout:
+            raise ConfigError("BASH_TIMEOUT_S must not exceed MAX_BASH_TIMEOUT_S")
+        if self.base_url:
+            try:
+                url = urlsplit(self.base_url)
+            except ValueError as exc:
+                raise ConfigError("OPENAI_BASE_URL must be an http(s) URL") from exc
+            if url.scheme not in ("http", "https") or not url.netloc:
+                raise ConfigError("OPENAI_BASE_URL must be an http(s) URL")
+
     @classmethod
     def from_env(cls, *, workspace: str | None = None, model: str | None = None,
                  base_url: str | None = None, max_steps: int | None = None) -> "Config":
@@ -107,7 +132,7 @@ class Config:
             model=model or env.get("OPENAI_MODEL") or DEFAULT_MODEL,
             api_key=env.get("OPENAI_API_KEY"),
             base_url=base_url if base_url is not None else env.get("OPENAI_BASE_URL"),
-            max_steps=max_steps or _env_int(env, "MAX_STEPS", 40),
+            max_steps=max_steps if max_steps is not None else _env_int(env, "MAX_STEPS", 40),
             bash_timeout=_env_float(env, "BASH_TIMEOUT_S", 120.0),
             max_bash_timeout=_env_float(env, "MAX_BASH_TIMEOUT_S", 600.0),
             max_output_chars=_env_int(env, "MAX_TOOL_OUTPUT_CHARS", 30_000),

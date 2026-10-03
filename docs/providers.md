@@ -1,6 +1,6 @@
 # Model 与 Provider
 
-Model 协议的异步 generate(messages, tools, on_delta) 返回 ModelResponse。core 不依赖 SDK。Provider 接收 model、base_url、认证、超时、usage 开关与 sink；负责编码、流聚合、错误映射、取消和幂等 close。
+Model 协议的 stream(system, messages, tools) 同步迭代 TextDelta/ReasoningDelta，并以唯一 ModelResponse 结束。core 不依赖 SDK。Provider 接收 model、base_url、认证、超时、usage 开关与 sink；负责编码、流聚合、错误映射、取消和幂等 close。保留同步接口使当前 TUI 和 SDK 调用方式稳定。
 
 ## OpenAI 兼容 Chat Completions
 

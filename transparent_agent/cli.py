@@ -1,100 +1,81 @@
-"""Command line entry point: wires configuration, model, tools, agent and TUI."""
+"""CLI composition and offline trace inspection."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from pathlib import Path
 
 from . import __version__
-from .agent import Agent, CANCELLED, ERROR, FINAL
+from .agent import Agent, CANCELLED, FINAL
 from .config import Config, ConfigError, load_dotenv
-from .models import ModelError, create_model
-from .prompt import build_system_prompt
-from .tools import ToolContext, build_registry
+from .extensions import ExtensionError
+from .models import ModelError
+from .runtime import Runtime, RuntimeOptions
+from .storage import PersistenceError
+from .trace import read_trace
 from .tui.app import Tui
 from .tui.render import Renderer, Style
 
 
 def build_agent(config: Config, sink) -> Agent:
-    model = create_model(
-        model=config.model,
-        api_key=config.api_key,
-        base_url=config.base_url,
-        timeout=config.request_timeout,
-        stream_usage=config.stream_usage,
-    )
-    return Agent(
-        model=model,
-        tools=build_registry(),
-        tool_context=ToolContext(
-            workspace=config.workspace,
-            bash_timeout=config.bash_timeout,
-            max_bash_timeout=config.max_bash_timeout,
-            max_output_chars=config.max_output_chars,
-        ),
-        system_prompt=build_system_prompt(config.workspace),
-        max_steps=config.max_steps,
-        sink=sink,
-    )
+    """Compatibility entry point. Close agent.runtime after embedding it."""
+    runtime = Runtime(config, sink=sink)
+    runtime.agent.runtime = runtime
+    return runtime.agent
 
 
 def parse_args(argv=None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="transparent-agent",
-        description="A lightweight terminal coding agent.",
-    )
-    parser.add_argument("-C", "--workspace", help="workspace root (default: current directory)")
+    parser = argparse.ArgumentParser(prog="transparent-agent", description="A transparent terminal coding agent.")
+    parser.add_argument("-C", "--workspace", help="workspace root (default: current directory or resumed workspace)")
     parser.add_argument("--model", help="model name (default: $OPENAI_MODEL)")
-    parser.add_argument("--base-url", help="OpenAI-compatible API base URL (default: $OPENAI_BASE_URL)")
-    parser.add_argument("--max-steps", type=int, help="model requests allowed per user turn (default: $MAX_STEPS or 40)")
-    parser.add_argument(
-        "-p", "--print", dest="prompt", metavar="PROMPT",
-        help="run one task non-interactively, then exit",
-    )
+    parser.add_argument("--base-url", help="OpenAI-compatible API base URL")
+    parser.add_argument("--max-steps", type=int, help="model requests per user turn")
+    parser.add_argument("-p", "--print", dest="prompt", metavar="PROMPT", help="run one task, then exit")
+    parser.add_argument("--state-dir", type=Path, help="local session state root")
+    parser.add_argument("--trace-dir", type=Path, help="trace root for new sessions")
+    parser.add_argument("--resume", type=Path, metavar="SESSION_JSON", help="resume history without replaying tools")
+    parser.add_argument("--skill-dir", type=Path, action="append", default=[], help="additional skills directory (repeatable)")
+    parser.add_argument("--prompt-dir", type=Path, action="append", default=[], help="additional prompt directory (repeatable)")
+    parser.add_argument("--extension", type=Path, action="append", default=[], help="explicit Python extension (repeatable)")
+    parser.add_argument("--inspect", type=Path, metavar="TRACE_JSONL", help="inspect trace offline; no API key required")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser.parse_args(argv)
 
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    load_dotenv()
     try:
-        config = Config.from_env(
-            workspace=args.workspace, model=args.model, base_url=args.base_url, max_steps=args.max_steps
-        )
-    except ConfigError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-
-    interactive = args.prompt is None
-    style = Style(enabled=sys.stdout.isatty() if interactive else sys.stderr.isatty())
-    out = sys.stdout
-    log = sys.stdout if interactive else sys.stderr
-    renderer = Renderer(style=style, out=out, log=log)
-
-    try:
-        agent = build_agent(config, sink=renderer)
-    except ModelError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-
-    if not interactive:
-        try:
-            result = agent.send(args.prompt)
-        except KeyboardInterrupt:
-            print("\ninterrupted", file=sys.stderr)
-            return 130
-        if result.stop_reason == FINAL:
+        if args.inspect:
+            for record in read_trace(args.inspect.expanduser().resolve()):
+                print(json.dumps(record, ensure_ascii=False, indent=2))
             return 0
-        if result.stop_reason == CANCELLED:
-            return 130
-        if result.stop_reason == ERROR and result.error:
-            print(f"error: {result.error}", file=sys.stderr)
-        return 1
-
-    tui = Tui(agent, renderer, style)
-    try:
-        return tui.run()
+        load_dotenv()
+        workspace = args.workspace
+        if args.resume and workspace is None:
+            try:
+                workspace = json.loads(args.resume.expanduser().read_text(encoding="utf-8"))["workspace"]
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise PersistenceError(f"cannot read resumed workspace: {exc}") from exc
+        config = Config.from_env(workspace=workspace, model=args.model, base_url=args.base_url, max_steps=args.max_steps)
+        interactive = args.prompt is None
+        style = Style(enabled=sys.stdout.isatty() if interactive else sys.stderr.isatty())
+        renderer = Renderer(style=style, out=sys.stdout, log=sys.stdout if interactive else sys.stderr)
+        options = RuntimeOptions(state_dir=args.state_dir, trace_dir=args.trace_dir, resume=args.resume,
+                                 model_override=args.model is not None, skill_dirs=args.skill_dir,
+                                 prompt_dirs=args.prompt_dir, extensions=args.extension)
+        with Runtime(config, sink=renderer, options=options) as runtime:
+            print(f"trace: {runtime.trace_path}\nsession: {runtime.session_path}", file=sys.stderr)
+            if interactive:
+                return Tui(runtime.agent, renderer, style).run()
+            result = runtime.agent.send(args.prompt)
+            if result.stop_reason == FINAL:
+                return 0
+            return 130 if result.stop_reason == CANCELLED else 1
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         return 130
+    except (ConfigError, ModelError, PersistenceError, ExtensionError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2

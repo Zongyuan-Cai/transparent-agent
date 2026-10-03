@@ -15,6 +15,10 @@ Commands:
   /clear         forget the conversation and start fresh
   /status        workspace, model, conversation and token usage
   /model [NAME]  show or change the model
+  /skills        list available skills
+  /skill:NAME    load a skill and send a task
+  /prompt:NAME   expand a template and send a task
+  /trace         show trace and session paths
   /exit          quit (Ctrl+D also quits)
 Input: Enter sends; end a line with \\ to continue on the next line; Ctrl+C interrupts."""
 
@@ -95,8 +99,22 @@ class Tui:
             self._status()
         elif command == "/model":
             if arguments:
-                self.agent.model.name = arguments[0]
+                self.agent.set_model(arguments[0])
             self._write(f"model: {self.agent.model.name}\n")
+        elif command == "/skills":
+            resources = self.agent.resources
+            if resources is None or not resources.skills:
+                self._write("no skills discovered\n")
+            else:
+                for skill in resources.skills.values():
+                    self._write(f"{skill.name}: {skill.description}" + (" (explicit only)" if skill.explicit_only else "") + "\n")
+        elif command == "/trace":
+            self._write(f"trace: {self.agent.trace_path or 'not recorded'}\n")
+            store = self.agent.session_store
+            self._write(f"session: {store.path if store else 'in memory'}\n")
+        elif command.startswith(("/skill:", "/prompt:")):
+            self.agent.send(text)
+            self._write("\n")
         else:
             self._write(f"unknown command {command!r}; type /help\n")
         return False

@@ -96,9 +96,9 @@ def tool_grep(args: dict, ctx: ToolContext) -> ToolResult:
 
     scope = rel_path(ctx.workspace, root)
     if not matches:
-        return ToolResult(f"no matches for {pattern!r} in {scope}" + note)
+        return ToolResult(f"no matches for {pattern!r} in {scope}" + note, metadata={"backend": "rg" if shutil.which("rg") else "python"})
     header = f"{len(matches)} match(es) for {pattern!r} in {scope}:"
-    return ToolResult(header + note + "\n" + "\n".join(matches))
+    return ToolResult(header + note + "\n" + "\n".join(matches), metadata={"backend": "rg" if shutil.which("rg") else "python"})
 
 
 def _find_matches(pattern: str, name: str, full: Path, root: Path) -> bool:
@@ -194,6 +194,8 @@ def _grep_python(pattern: str, root: Path, glob: str | None, ignore_case: bool,
             timed_out = True
             break
         try:
+            if not path.resolve().is_relative_to(ctx.workspace.resolve()):
+                continue
             if path.stat().st_size > MAX_SCANNED_FILE_BYTES:
                 continue
             data = path.read_bytes()
@@ -202,7 +204,11 @@ def _grep_python(pattern: str, root: Path, glob: str | None, ignore_case: bool,
         if b"\x00" in data[:8192]:
             continue
         label = _display_path(ctx.workspace, str(path))
-        for number, line in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):
+        try:
+            lines = data.decode("utf-8").splitlines()
+        except UnicodeDecodeError:
+            continue
+        for number, line in enumerate(lines, 1):
             if regex.search(line):
                 matches.append(f"{label}:{number}:{line[:MAX_LINE_CHARS]}")
                 if len(matches) >= MAX_GREP_MATCHES:

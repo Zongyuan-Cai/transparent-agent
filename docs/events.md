@@ -11,6 +11,7 @@
 | model_request_start | 完整 system/messages/tools、step/request_id |
 | api_request | 实际 method/url/headers/body_base64 |
 | api_response_start / chunk / end | 状态、headers、字节、终止 |
+| api_response_parsed | SDK 解析后的 chunk，保留未知 JSON 字段 |
 | model_text_delta / model_reasoning_delta | 展示增量 |
 | model_response | 归一化完整响应/usage |
 | tool_call_start / end | 原参数、全量/回填结果、metadata、失败/取消、耗时 |

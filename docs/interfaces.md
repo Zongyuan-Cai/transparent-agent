@@ -11,7 +11,7 @@ print 助手文字到 stdout，工具与记录路径到 stderr。inspect 不需�
 
 SDK Agent 接收 Model、Registry、ToolContext、system、sink、可选 session store。可用 fake Model/NullSink，无 CLI 默认 trace 时不能宣称有持久透明记录。runtime 支持注入 Model 做离线端到端测试。
 
-run(user_text)、clear、history 和统计通过公开接口。run 重入拒绝，取消用 asyncio task cancellation；clear/模型切换只能在 idle。
+send(user_text)、clear、set_model、history 和统计通过公开接口。send 重入拒绝，取消用 KeyboardInterrupt；clear/模型切换只能在 idle。Runtime 支持上下文管理器，退出关闭客户端、trace 和会话锁。
 
 保留 TUI 的 Enter、反斜杠续行、Ctrl+C、Ctrl+D、/help、/clear、/status、/model、/exit、流式 renderer。只加 /skills、/skill:name、/prompt:name、/trace 的轻入口；不改布局、主题、编辑器。旧 renderer 忽略新事件，持久化由 runtime 负责。
 

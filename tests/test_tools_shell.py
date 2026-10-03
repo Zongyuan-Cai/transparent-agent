@@ -17,9 +17,9 @@ def test_bash_captures_stdout_and_exit_code(workspace, ctx):
     assert "--- stderr ---" in result.output
 
 
-def test_bash_nonzero_exit_is_a_normal_observation(workspace, ctx):
+def test_bash_nonzero_exit_is_an_error_observation(workspace, ctx):
     result = tool_bash({"command": "echo out; exit 3"}, ctx)
-    assert not result.is_error
+    assert result.is_error
     assert "exit_code: 3" in result.output
     assert "out" in result.output
 

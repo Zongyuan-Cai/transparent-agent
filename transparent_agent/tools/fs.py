@@ -30,7 +30,13 @@ def tool_read(args: dict, ctx: ToolContext) -> ToolResult:
     if b"\x00" in data[:8192]:
         raise ToolError(f"{name} looks like a binary file ({size} bytes); read only handles text")
 
-    lines = data.decode("utf-8", errors="replace").splitlines()
+    try:
+        # A byte window can end inside a UTF-8 character; decoding the
+        # complete prefix via an incremental decoder preserves valid files.
+        import codecs
+        lines = codecs.getincrementaldecoder("utf-8")().decode(data, final=not clipped).splitlines()
+    except UnicodeDecodeError as exc:
+        raise ToolError(f"{name} is not valid UTF-8 text") from exc
     if clipped and lines:
         lines.pop()  # the last line of the window may be cut in half
     available = len(lines)
@@ -42,7 +48,7 @@ def tool_read(args: dict, ctx: ToolContext) -> ToolResult:
     if start is None and end is None:
         start, end = 1, min(available, MAX_READ_LINES)
     else:
-        start = start or 1
+        start = 1 if start is None else start
         if start < 1:
             raise ToolError("start_line must be >= 1")
         if start > available:
@@ -53,7 +59,7 @@ def tool_read(args: dict, ctx: ToolContext) -> ToolResult:
                     "use grep or bash to inspect it"
                 )
             raise ToolError(f"start_line {start} is beyond the end of the file ({available} lines)")
-        end = min(end or available, available)
+        end = min(available if end is None else end, available)
         if end < start:
             raise ToolError(f"end_line {end} is before start_line {start}")
 
